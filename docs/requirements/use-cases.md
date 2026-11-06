@@ -1502,6 +1502,7 @@ Details:
 **Associated Information:**
 - The confirmation warning identifies the student and explains the consequences governed by BR-student-lifecycle, BR-evaluation-active-participants, BR-submission-owed, and FR-SEC-active-account: access stops even with an existing login; team membership and historical work remain; new evaluations by or about the student stop; historical weekly results remain; and submission reminders stop. It explains that reactivation is available through UC-STU-reactivate-student and that deactivation differs from physical deletion through UC-STU-delete-student.
 - The warning offers explicit confirm and cancel actions. The system reports deactivation success only after the backend confirms it; a failed request does not display a success message.
+- A competing profile save carries the account status observed when its form loaded. If that expected status differs from the stored status, the system rejects the entire profile save as a conflict and asks the caller to refresh. Status comparison and profile persistence are atomic with respect to deactivation, so a stale profile form cannot undo a completed deactivation.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
