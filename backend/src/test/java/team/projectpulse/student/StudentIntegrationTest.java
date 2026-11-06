@@ -225,6 +225,23 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.message").value("You are not allowed to register as instructor for email: l.santos@abc.edu"));
     }
 
+    // Oracle: dedicated-action contract T13; no accompanying profile change on refusal.
+    @Test
+    void genericEditRefusesDeactivationAndRequiresExpectedStatus() throws Exception {
+        String forged = "{\"username\":\"j.smith@abc.edu\",\"firstName\":\"Changed\",\"lastName\":\"Smith\",\"email\":\"j.smith@abc.edu\",\"enabled\":false,\"roles\":\"student\"}";
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                .param("expectedEnabled", "true").contentType(MediaType.APPLICATION_JSON)
+                .content(forged).header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Use the dedicated deactivation action to deactivate a student."));
+        this.mockMvc.perform(get(this.baseUrl + "/students/4").header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.data.firstName").value("John"))
+                .andExpect(jsonPath("$.data.enabled").value(true));
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                .contentType(MediaType.APPLICATION_JSON).content(forged).header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+    }
+
     @Test
     void testStudentJohnUpdatesOwnInfo() throws Exception {
         Map<String, Object> studentDto = new HashMap<>();
@@ -232,13 +249,13 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         studentDto.put("firstName", "John (updated)");
         studentDto.put("lastName", "Smith");
         studentDto.put("email", "j.smith@abc.edu");
-        studentDto.put("enabled", false); // Student cannot change their enabled status.
+        studentDto.put("enabled", true); // Student cannot change their enabled status.
         studentDto.put("roles", "instructor"); // Student cannot change their role.
 
         String json = this.jsonMapper.writeValueAsString(studentDto);
 
         // When and then
-        this.mockMvc.perform(put(this.baseUrl + "/students/4").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+        this.mockMvc.perform(put(this.baseUrl + "/students/4").param("expectedEnabled", "true").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
                 .andExpect(jsonPath("$.flag").value(true))
                 .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
                 .andExpect(jsonPath("$.message").value("Update student successfully"))
@@ -263,7 +280,7 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         String json = this.jsonMapper.writeValueAsString(studentDto);
 
         // When and then
-        this.mockMvc.perform(put(this.baseUrl + "/students/5").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+        this.mockMvc.perform(put(this.baseUrl + "/students/5").param("expectedEnabled", "true").contentType(MediaType.APPLICATION_JSON).content(json).accept(MediaType.APPLICATION_JSON).header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
                 .andExpect(jsonPath("$.flag").value(false))
                 .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN))
                 .andExpect(jsonPath("$.message").value("No permission."))

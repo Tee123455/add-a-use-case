@@ -49,6 +49,13 @@ public class EvaluationService {
     }
 
     public PeerEvaluation addPeerEvaluation(PeerEvaluation newPeerEvaluation) {
+        // BR-evaluation-active-participants applies to creation, not historical edits.
+        if (!newPeerEvaluation.getEvaluator().isEnabled()) {
+            throw new PeerEvaluationIllegalArgumentException("Inactive students cannot submit new peer evaluations.");
+        }
+        if (!newPeerEvaluation.getEvaluatee().isEnabled()) {
+            throw new PeerEvaluationIllegalArgumentException("This student is inactive and cannot receive new peer evaluations. Refresh teammates to continue.");
+        }
         // Make sure the submission week is one of the course section's active weeks and is still open for submission
         requireOpenSubmissionWindow(newPeerEvaluation.getEvaluator().getSection(), newPeerEvaluation.getWeek(), NOT_PREVIOUS_WEEK_MESSAGE);
 
@@ -221,7 +228,11 @@ public class EvaluationService {
         report.setSectionName(this.sectionRepository.findById(sectionId).orElseThrow(() -> new ObjectNotFoundException("section", sectionId)).getSectionName());
 
         // Get all students in the section
-        List<Student> students = this.studentRepository.findBySectionSectionId(sectionId).stream().filter(student -> student.getTeam() != null).collect(Collectors.toList());
+        List<Student> students = this.studentRepository.findBySectionSectionId(sectionId).stream()
+                .filter(student -> student.isEnabled()
+                        ? student.getTeam() != null
+                        : this.evaluationRepository.existsByWeekAndEvaluateeId(week, student.getId()))
+                .collect(Collectors.toList());
 
         // For each student, compute her average total score, collect all public comments and private comments, and compute rating averages for each criterion.
         students.forEach(student -> {

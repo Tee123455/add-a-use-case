@@ -63,9 +63,9 @@ public class StudentController {
     }
 
     @PutMapping("/{studentId}")
-    public Result updateStudent(@PathVariable Integer studentId, @Valid @RequestBody StudentDto studentDto) {
+    public Result updateStudent(@PathVariable Integer studentId, @Valid @RequestBody StudentDto studentDto, @RequestParam boolean expectedEnabled) {
         Student update = this.studentDtoToStudentConverter.convert(studentDto);
-        Student updatedStudent = this.studentService.updateStudent(studentId, update);
+        Student updatedStudent = this.studentService.updateStudent(studentId, update, expectedEnabled);
         StudentDto updatedStudentDto = this.studentToStudentDtoConverter.convert(updatedStudent);
         return new Result(true, StatusCode.SUCCESS, "Update student successfully", updatedStudentDto);
     }

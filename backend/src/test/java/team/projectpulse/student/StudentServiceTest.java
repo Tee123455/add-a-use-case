@@ -36,6 +36,8 @@ import static org.mockito.Mockito.*;
 class StudentServiceTest {
 
     @Mock
+    jakarta.persistence.EntityManager entityManager;
+    @Mock
     StudentRepository studentRepository;
     @Mock
     SectionRepository sectionRepository;
@@ -126,7 +128,7 @@ class StudentServiceTest {
     @Test
     void testStudentUpdateOwnInfo() {
         // Given
-        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
+        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", true, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
         given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
 
@@ -139,7 +141,7 @@ class StudentServiceTest {
         SecurityContextHolder.setContext(securityContext);
 
         // When
-        Student result = this.studentService.updateStudent(1, update);
+        Student result = this.studentService.updateStudent(1, update, true);
 
         // Then
         assertThat(result.getUsername()).isEqualTo(update.getUsername());
@@ -147,13 +149,14 @@ class StudentServiceTest {
         assertThat(result.getLastName()).isEqualTo(update.getLastName());
         assertThat(result.getEmail()).isEqualTo(update.getEmail());
         assertThat(result.getRoles()).isNotEqualTo(update.getRoles());
-        assertThat(result.isEnabled()).isNotEqualTo(update.isEnabled());
+        assertThat(result.isEnabled()).isTrue();
     }
 
     @Test
     void testInstructorUpdatesStudent() {
+        given(this.userUtils.hasRole("ROLE_instructor")).willReturn(true);
         // Given
-        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", false, "admin student");
+        Student update = new Student("john", "John (updated)", "Smith (updated)", "j.smith@abc.edu (updated)", "", true, "admin student");
         given(this.studentRepository.findById(1)).willReturn(Optional.of(this.students.get(0)));
         given(this.studentRepository.save(any(Student.class))).willReturn(this.students.get(0));
 
@@ -166,7 +169,7 @@ class StudentServiceTest {
         SecurityContextHolder.setContext(securityContext);
 
         // When
-        Student result = this.studentService.updateStudent(1, update);
+        Student result = this.studentService.updateStudent(1, update, true);
 
         // Then
         assertThat(result.getUsername()).isEqualTo(update.getUsername());
