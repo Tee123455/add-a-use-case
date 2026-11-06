@@ -173,4 +173,39 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
             tx.executeWithoutResult(status -> students.findById(id).orElseThrow().setEnabled(true));
         }
     }
+    // Oracle: extension 6a, T4. Simultaneous requests have exactly one changed outcome.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void simultaneousDeactivationsProduceOneChangeAndOneNoOp() throws Exception {
+        TransactionTemplate tx = new TransactionTemplate(transactions);
+        int id = tx.execute(status -> john().getId());
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Callable<Boolean> deactivate = () -> {
+            ready.countDown();
+            if (!start.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("start timeout");
+            try {
+                return tx.execute(status -> {
+                    caller("b.gates@abc.edu", "ROLE_instructor");
+                    return service.deactivateStudent(id).changed();
+                });
+            } finally { SecurityContextHolder.clearContext(); }
+        };
+        try {
+            Future<Boolean> first = pool.submit(deactivate);
+            Future<Boolean> second = pool.submit(deactivate);
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(true, false);
+            tx.executeWithoutResult(status -> assertThat(students.findById(id).orElseThrow().isEnabled()).isFalse());
+        } finally {
+            start.countDown();
+            pool.shutdown();
+            if (!pool.awaitTermination(20, TimeUnit.SECONDS)) pool.shutdownNow();
+            tx.executeWithoutResult(status -> students.findById(id).orElseThrow().setEnabled(true));
+        }
+    }
+
 }
