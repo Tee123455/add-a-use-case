@@ -1458,10 +1458,12 @@ Details:
 
 **Preconditions:**
 - PRE-1. The course admin or instructor is logged into the system.
-- PRE-2. There exists at least one active student in the system.
+- PRE-2. The target student account exists; its current status is checked when deactivation is requested.
 
 **Postconditions:**
-- POST-1. The student's account is deactivated.
+- POST-1. The student's account is deactivated and protected access is denied per FR-SEC-active-account.
+- POST-2. Account records, team membership, and historical work are preserved per BR-student-lifecycle.
+- POST-3. Evaluation eligibility, report inclusion, and submission obligations follow BR-evaluation-active-participants and BR-submission-owed.
 
 **Main Success Scenario:**
 1. The course admin or instructor indicates to deactivate a student.
@@ -1473,12 +1475,33 @@ Details:
 7. Use case ends.
 
 **Extensions:**
+- **3a. The caller is neither an instructor assigned to the student's course section nor the course admin who owns its course:**
+  - 3a1. The system refuses deactivation without changing the account or related records (BR-student-lifecycle, BR-section-scoped-access).
+  - 3a2. Use case ends. A student cannot deactivate her own account.
+- **4a. The course admin or instructor cancels or dismisses the confirmation warning:**
+  - 4a1. The system sends no deactivation request and changes no account or related records.
+  - 4a2. Use case ends. Cancellation before submission has the same outcome.
+- **6a. The student is already deactivated, including when another request deactivated her after the warning was displayed:**
+  - 6a1. The system reports successful completion with "Student is already deactivated" and makes no changes.
+  - 6a2. Use case ends. Authorization is still required.
+- **6b. The student has an existing authenticated session or unexpired access token:**
+  - 6b1. After deactivation commits, the system refuses subsequent protected requests and new authentication despite otherwise-valid credentials (FR-SEC-active-account).
+  - 6b2. Requests already executing before deactivation commits are outside this guarantee.
+- **6c. The student belongs to a team:**
+  - 6c1. The system retains her membership and historical work under BR-student-lifecycle; account access is still revoked.
+  - 6c2. Use case ends with the student deactivated.
+- **6d. The student has submitted work or evaluations of her exist:**
+  - 6d1. The system retains the records under BR-student-lifecycle and applies BR-evaluation-active-participants to new evaluations and weekly reports.
+  - 6d2. The system excludes the student from submission obligations and reminders under BR-submission-owed.
+  - 6d3. Use case ends with the student deactivated.
+
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
-**Business Rules:** BR-student-lifecycle
+**Business Rules:** BR-student-lifecycle, BR-section-scoped-access, BR-team-scoped-access, BR-team-assignment-required, BR-evaluation-active-participants, BR-submission-owed
 
 **Associated Information:**
-- Consequence of the deactivation: The student will no longer be able to log in or submit weekly activity reports and peer evaluations, but the student's account and her previously submitted work are kept in the system. Deactivation will NOT remove the student from the system, and the account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- The confirmation warning identifies the student and explains the consequences governed by BR-student-lifecycle, BR-evaluation-active-participants, BR-submission-owed, and FR-SEC-active-account: access stops even with an existing login; team membership and historical work remain; new evaluations by or about the student stop; historical weekly results remain; and submission reminders stop. It explains that reactivation is available through UC-STU-reactivate-student and that deactivation differs from physical deletion through UC-STU-delete-student.
+- The warning offers explicit confirm and cancel actions. The system reports deactivation success only after the backend confirms it; a failed request does not display a success message.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
