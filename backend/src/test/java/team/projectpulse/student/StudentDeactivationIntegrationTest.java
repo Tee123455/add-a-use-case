@@ -70,11 +70,16 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
         int id = target.getId();
         var teamId = target.getTeam().getTeamId();
         var sectionId = target.getSection().getSectionId();
+        var accountBefore = jdbc.queryForMap("select * from peer_evaluation_user where id = ?", id);
+        accountBefore.remove("enabled");
         var activities = jdbc.queryForList("select * from activity order by activity_id");
         var evaluations = jdbc.queryForList("select * from peer_evaluation order by peer_evaluation_id");
         var ratings = jdbc.queryForList("select * from rating order by rating_id");
         assertThat(service.deactivateStudent(id).changed()).isTrue();
         em.flush(); em.clear();
+        var accountAfter = jdbc.queryForMap("select * from peer_evaluation_user where id = ?", id);
+        accountAfter.remove("enabled");
+        assertThat(accountAfter).isEqualTo(accountBefore);
         // Oracle: 6d/BR-student-lifecycle, T7: complete stored rows, not just counts.
         assertThat(jdbc.queryForList("select * from activity order by activity_id")).isEqualTo(activities);
         assertThat(jdbc.queryForList("select * from peer_evaluation order by peer_evaluation_id")).isEqualTo(evaluations);
