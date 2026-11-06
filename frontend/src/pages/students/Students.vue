@@ -39,9 +39,13 @@
           <el-tag type="danger" v-else>Disabled</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="Operations" width="120">
+      <el-table-column label="Operations" width="210">
         <template #default="{ row }">
+          <el-button data-cy="student-details-open" @click.stop="showStudentDetails(row)"
+            >Details</el-button
+          >
           <el-button
+            data-cy="student-edit-open"
             icon="Edit"
             circle
             plain
@@ -66,6 +70,70 @@
       @current-change="handlePageNumberChange"
       style="margin-top: 20px; justify-content: flex-end"
     />
+    <el-dialog
+      v-model="detailsVisible"
+      title="Student details"
+      width="520px"
+      data-cy="student-details"
+    >
+      <template v-if="selectedStudent">
+        <p>
+          <strong>{{ selectedStudent.firstName }} {{ selectedStudent.lastName }}</strong>
+        </p>
+        <p>{{ selectedStudent.email }}</p>
+        <p>Course section: {{ selectedStudent.sectionName }}</p>
+        <p>Team: {{ selectedStudent.teamName || 'No team assigned' }}</p>
+        <p>Status: {{ selectedStudent.enabled ? 'Enabled' : 'Disabled' }}</p>
+        <el-button type="danger" data-cy="deactivate-open" @click="openDeactivationWarning"
+          >Deactivate</el-button
+        >
+      </template>
+    </el-dialog>
+    <el-dialog
+      v-model="deactivationVisible"
+      title="Deactivate student?"
+      width="560px"
+      data-cy="deactivate-dialog"
+      :close-on-click-modal="!deactivating"
+      :close-on-press-escape="!deactivating"
+      :show-close="!deactivating"
+    >
+      <template v-if="selectedStudent">
+        <p data-cy="deactivate-target">
+          <strong>{{ selectedStudent.firstName }} {{ selectedStudent.lastName }}</strong> ({{
+            selectedStudent.email
+          }})
+        </p>
+        <ul data-cy="deactivate-consequences">
+          <li>Account access stops, even with an existing login.</li>
+          <li>Team membership and historical work remain.</li>
+          <li>
+            New peer evaluations by or about this student stop; historical weekly results remain.
+          </li>
+          <li>Submission reminders stop.</li>
+        </ul>
+        <p>
+          Deactivation differs from permanent deletion. Account access can be restored through
+          reactivation.
+        </p>
+      </template>
+      <template #footer>
+        <el-button
+          data-cy="deactivate-cancel"
+          :disabled="deactivating"
+          @click="deactivationVisible = false"
+          >Cancel</el-button
+        >
+        <el-button
+          data-cy="deactivate-confirm"
+          type="danger"
+          :loading="deactivating"
+          :disabled="deactivating"
+          @click="confirmDeactivation"
+          >Confirm deactivation</el-button
+        >
+      </template>
+    </el-dialog>
     <!-- Dialog for editing student -->
     <el-dialog v-model="dialogVisible" title="Edit a student" width="30%" destroy-on-close>
       <EditStudentForm
@@ -78,7 +146,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { searchStudents } from '@/apis/student'
+import { searchStudents, findStudentById, deactivateStudent } from '@/apis/student'
 import type {
   SearchStudentByCriteriaResponse,
   Student,
@@ -98,6 +166,42 @@ const students = ref<Student[]>([]) // Array of loaded students
 const loading = ref<boolean>(true) // Loading status
 const settingsStore = useSettingsStore()
 
+const selectedStudent = ref<Student>()
+const detailsVisible = ref(false)
+const deactivationVisible = ref(false)
+const deactivating = ref(false)
+
+async function showStudentDetails(student: Student) {
+  try {
+    const result = await findStudentById(student.id as number)
+    selectedStudent.value = result.data
+    detailsVisible.value = true
+  } catch {
+    // Shared interceptor displays the refusal/failure.
+  }
+}
+
+function openDeactivationWarning() {
+  detailsVisible.value = false
+  deactivationVisible.value = true
+}
+
+async function confirmDeactivation() {
+  if (deactivating.value || !selectedStudent.value) return
+  deactivating.value = true
+  try {
+    const result = await deactivateStudent(selectedStudent.value.id as number)
+    selectedStudent.value = result.data
+    deactivationVisible.value = false
+    ElMessage.success(result.message)
+    await loadStudents()
+  } catch {
+    // No optimistic status change or success on failure. Keep the warning available for retry.
+  } finally {
+    deactivating.value = false
+  }
+}
+
 // Pagination information
 const pageNumber = ref<number>(1) // current page number, starting from 1
 const pageSize = ref<number>(50) // number of elements per page
@@ -116,17 +220,20 @@ onMounted(() => {
 async function loadStudents() {
   loading.value = true
   // On the back end, the page number starts from 0, so subtract 1 here
-  const result: SearchStudentByCriteriaResponse = await searchStudents(
-    { page: pageNumber.value - 1, size: pageSize.value },
-    searchCriteria.value
-  )
-  students.value = result.data.content
+  try {
+    const result: SearchStudentByCriteriaResponse = await searchStudents(
+      { page: pageNumber.value - 1, size: pageSize.value },
+      searchCriteria.value
+    )
+    students.value = result.data.content
 
-  // Update pagination information
-  pageNumber.value = result.data.number + 1 // The page number starts from 0 on the back end, so add 1 here
-  pageSize.value = result.data.size
-  totalElements.value = result.data.totalElements
-  loading.value = false
+    // Update pagination information
+    pageNumber.value = result.data.number + 1 // The page number starts from 0 on the back end, so add 1 here
+    pageSize.value = result.data.size
+    totalElements.value = result.data.totalElements
+  } finally {
+    loading.value = false
+  }
 }
 
 function resetSearchCriteria() {

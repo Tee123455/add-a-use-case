@@ -16,6 +16,8 @@
     <el-form-item label="Status:" prop="enabled">
       <el-switch
         v-model="studentBeingEdited.enabled"
+        :disabled="expectedEnabled !== false"
+        data-cy="student-edit-status"
         inline-prompt
         active-text="Enabled"
         inactive-text="Disabled"
@@ -34,15 +36,36 @@
     <el-form-item label="Team:" prop="teamName">
       <el-input v-model="studentBeingEdited.teamName" disabled></el-input>
     </el-form-item>
+    <p v-if="expectedEnabled" data-cy="dedicated-deactivation-hint">
+      Use Deactivate in student details to deactivate this student.
+    </p>
+    <el-alert
+      v-if="profileConflict"
+      title="Account status changed. Refresh before saving again."
+      type="warning"
+      :closable="false"
+      data-cy="profile-conflict"
+    />
+    <el-button v-if="profileConflict" @click="loadStudent(studentId)" data-cy="profile-refresh"
+      >Refresh profile</el-button
+    >
     <div style="display: flex; justify-content: end">
       <el-button @click="$emit('close-dialog')"> Cancel </el-button>
-      <el-button type="primary" @click="updateExistingStudent()"> Confirm </el-button>
+      <el-button
+        type="primary"
+        :disabled="expectedEnabled === undefined || profileConflict"
+        @click="updateExistingStudent()"
+        data-cy="student-edit-save"
+      >
+        Confirm
+      </el-button>
     </div>
   </el-form>
 </template>
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
+import { isAxiosError } from 'axios'
 import type { Student } from '@/apis/student/types'
 import type { FormInstance } from 'element-plus'
 import { findStudentById, updateStudent } from '@/apis/student'
@@ -61,6 +84,9 @@ const studentBeingEdited = ref<Student>({
   lastName: '',
   email: ''
 })
+
+const expectedEnabled = ref<boolean>()
+const profileConflict = ref(false)
 
 const studentForm = ref<FormInstance>() // Form reference
 
@@ -93,6 +119,8 @@ async function loadStudent(studentId: number) {
 
   studentBeingEdited.value.id = result.data.id as number
   studentBeingEdited.value.username = result.data.username
+  expectedEnabled.value = result.data.enabled
+  profileConflict.value = false
   studentBeingEdited.value.enabled = result.data.enabled
   studentBeingEdited.value.firstName = result.data.firstName
   studentBeingEdited.value.lastName = result.data.lastName
@@ -115,12 +143,15 @@ async function updateExistingStudent() {
     lastName: studentBeingEdited.value.lastName,
     email: studentBeingEdited.value.email
   }
-  console.log(updatedStudent)
-  // Call the API to update the user
-  await updateStudent(updatedStudent)
-
-  ElMessage.success('Student updated successfully')
-  emit('close-dialog')
+  if (expectedEnabled.value === undefined || profileConflict.value) return
+  try {
+    await updateStudent(updatedStudent, expectedEnabled.value)
+    ElMessage.success('Student updated successfully')
+    emit('close-dialog')
+  } catch (error) {
+    if (isAxiosError(error) && error.response?.status === 409) profileConflict.value = true
+    // Other failures are displayed by the shared request interceptor; keep the form open.
+  }
 }
 </script>
 
