@@ -138,6 +138,21 @@ describe('Student deactivation', () => {
     cy.get('[aria-label="Edit a student"]').contains('.el-form-item', 'First Name:').find('input').should('have.value', 'John')
   })
 
+  it('keeps the inactive snapshot separate from intentional reactivation (T14)', () => {
+    deactivateJohn()
+    cy.intercept('PUT', '**/students/4?*').as('reactivateProfile')
+    johnRow().find('[data-cy=student-edit-open]').click()
+    cy.get('[data-cy=student-edit-status]').should('not.have.class', 'is-disabled').click()
+    cy.get('[data-cy=student-edit-save]').click()
+    cy.wait('@reactivateProfile').then(({ request, response }) => {
+      expect(request.query.expectedEnabled).to.eq('false')
+      expect(request.body.enabled).to.eq(true)
+      expect(response.statusCode).to.eq(200)
+      expect(response.body.data.enabled).to.eq(true)
+    })
+    cy.request({ url: `${api}/students/4`, headers: headers() }).its('body.data.enabled').should('eq', true)
+  })
+
   it('sends the loaded status from the current-user profile and preserves the form on conflict (T14)', () => {
     visitAs('j.smith@abc.edu', '/user/profile')
     cy.intercept('PUT', '**/students/4?*', { statusCode: 409, body: { flag: false, code: 409, message: 'Status changed; refresh.' } }).as('conflict')

@@ -10,7 +10,7 @@ The architecture authentication-gap clarification was explicitly approved in thi
 
 ## Execution results
 
-Suite results and the pending mutation exercise are recorded separately below. A successful bundle build does not imply a successful TypeScript check.
+Suite results and the completed mutation exercise are recorded separately below. A successful bundle build does not imply a successful TypeScript check.
 
 - Final full backend suite: **477 tests across 47 classes; 0 failures, 0 errors, 0 skips**, after the approved GET-route correction. Targeted security, service, endpoint, notification and concurrency checks also passed before their commits.
 - The student-management Cypress spec passes 12 tests, and the real-backend evaluation recovery spec passes one test.
@@ -49,6 +49,25 @@ Browser tests use the local MySQL/Mailpit/backend/Vite stack. The evaluation spe
 | T12 | `ActiveAccountJwtValidatorTest`; security integration active/inactive role, time/identity, deletion/signature and lookup-failure tests | Default time/signature validation remains; invalid/deleted/disabled identities and infrastructure failures never grant access. |
 | T13 | `genericEditCannotDeactivateOrSaveProfileChanges`; `StudentIntegrationTest.genericEditRefusesDeactivationAndRequiresExpectedStatus`; browser disabled-switch test | Refusal precedes profile-field mutation; the UI directs the user to the dedicated action. |
 | T14 | Stale service test; lock-wait integration test; retained status-update unit/HTTP tests; both Cypress profile caller tests | Required original snapshot is separate from desired status; stale save gets 409; missing parameter gets 400; no automatic retry. |
+
+## Test critique decisions
+
+At the student's direction, the agent implemented these recommendations. Keep the existing tests and their oracle mapping below; no whole test was dropped. This records the accepted changes, not a claim that the student personally read every test.
+
+- **Keep:** real-token enforcement, route and independent service authorization, stored-record preservation, concurrency, evaluation eligibility/history, reminder consumers, and browser confirmation/cancellation/failure/recovery tests. Unit and integration coverage serve different purposes: exact no-save assertions versus real persistence, security and transactions.
+- **Change T14 concurrency evidence:** replace the 200 ms future timeout with an observation of the profile worker's actual InnoDB lock wait in `performance_schema.data_lock_waits`. The observer uses a separate root connection to the disposable test container, since observing other transactions requires privileges beyond the application account. A bounded polling timeout only limits test duration; elapsed time is no longer the oracle. Keep the final conflict and unchanged-profile assertions.
+- **Change T9 historical evidence:** capture stored public/private comments and individual criterion scores before deactivation; after deactivation and membership removal, assert exact comment contents and independently calculated criterion averages, alongside the explicit seeded total average of 50. This tests preservation through real persistence without deriving expected values from the report method.
+- **Change T14 browser evidence:** add a fresh inactive profile case that intentionally requests `enabled=true`, asserts the separately transmitted `expectedEnabled=false`, and verifies the real response and persisted account status. This exercises retained existing behavior, without adding a reactivation feature.
+- **Drop:** the timing-only lock-wait assertion. The concurrency test itself remains.
+- **Mutation outcome:** keep the JWT post-commit test unchanged because the selected production mutation made it fail and restoring production behavior made it pass; see the exercise below.
+
+Validation of these changes on November 6, 2026: `StudentDeactivationIntegrationTest` passed all five tests with zero failures/errors/skips. The complete updated `student-deactivation.spec.cy.js` passed all 13 browser tests against the local app, including the new inactive-snapshot case. Both commands exited 0; `git diff --check` passed. The evaluation browser spec and the full backend suite were not rerun for these test-only changes. Local logs: `/tmp/stu-strengthened-backend.log` and `/tmp/stu-strengthened-cypress.log`.
+
+```sh
+bash backend/mvnw -q -f backend/pom.xml -Dtest=StudentDeactivationIntegrationTest test
+# From frontend/:
+env -u ELECTRON_RUN_AS_NODE node_modules/.bin/cypress run --browser electron --spec cypress/e2e/student-deactivation.spec.cy.js
+```
 
 ## Candidate test oracles for human critique
 
@@ -104,7 +123,21 @@ Existing student profile regression tests now send expectedEnabled and request o
 
 ## Mutation exercise
 
-The student selected JWT account-status enforcement as the least-trusted area. The execution approval prompt rejected the proposed temporary bypass, so the mutation command did not run, no production mutation was applied, and no red/green result is claimed. This assignment step remains pending. The intended oracle is `StudentDeactivationSecurityIntegrationTest.committedDeactivationRejectsOldTokenReadWriteAndFreshBasicLogin`: bypassing `user.isEnabled()` should allow the old token to reach a protected read and fail its expected-401 assertion. The original enabled-account check remains in the committed code. A mutation run is not a fresh-context review.
+The student selected JWT account-status enforcement as the least-trusted area. On November 6, 2026, at the student's request, the agent completed the mutation exercise against `StudentDeactivationSecurityIntegrationTest.committedDeactivationRejectsOldTokenReadWriteAndFreshBasicLogin`. The oracle is UC extension 6b, FR-SEC-active-account and design rows T5/T12: a real token obtained before committed deactivation must no longer grant protected access.
+
+The one-line mutation in `ActiveAccountJwtValidator.validate` changed `findById(id).filter(user -> user.isEnabled()).isPresent()` to `findById(id).isPresent()`. This retained the account-existence check while bypassing account-status enforcement.
+
+- **Red:** the single selected test failed at line 93: `Status expected:<401> but was:<200>`. Maven exited 1; one test ran, with one failure and no errors. The deactivated student's old JWT reached the protected student-details read. The test stopped at that assertion, so this mutation run does not independently demonstrate the later write/login assertions.
+- **Green:** the original enabled-account filter was restored, and the identical test passed: one test, zero failures, zero errors, zero skips; Maven exited 0. This run also reached the protected write, fresh Basic login and unchanged-profile assertions.
+- **Outcome:** the test detected the selected regression and was kept unchanged. No production mutation remains; the validator matches the reviewed commit. Execution logs are local at `/tmp/stu-jwt-mutation-red.log` and `/tmp/stu-jwt-mutation-green.log` and are not committed because test debug output includes authentication data.
+
+Both runs used local Docker/MySQL via Testcontainers and the same command:
+
+```sh
+bash backend/mvnw -q -f backend/pom.xml '-Dtest=StudentDeactivationSecurityIntegrationTest#committedDeactivationRejectsOldTokenReadWriteAndFreshBasicLogin' test
+```
+
+The earlier mutation attempt was declined before execution; the results above are from the subsequently authorized exercise. This agent-executed check does not replace the student's independent test critique or personal review.
 
 ## Human review still required
 
@@ -114,7 +147,7 @@ The student selected JWT account-status enforcement as the least-trusted area. T
 - Run a fresh-context review in a new session with the PR diff, merged use case and design. Record every finding and its fixed/rejected/follow-up outcome.
 - Leave the build PR open. No merge is authorized.
 
-Not verified: the pending mutation exercise, a fresh-context review and the student's independent test critique/inline review; production deployment, account-status lookup performance at load, and cancellation of already-executing requests. The last item is explicitly outside extension 6b's guarantee.
+Not verified here: the student's independent test critique/inline review; production deployment, account-status lookup performance at load, and cancellation of already-executing requests. The last item is explicitly outside extension 6b's guarantee. A separate fresh-context review reported no actionable findings and reran 32 targeted tests successfully; this mutation exercise adds the red/green result above.
 
 ## Documentation verification
 

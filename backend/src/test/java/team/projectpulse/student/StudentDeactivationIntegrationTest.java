@@ -104,6 +104,15 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
         Student author = john();
         Student target = students.findById(users.findByEmail("e.hudson@abc.edu").orElseThrow().getId()).orElseThrow();
         int sectionId = target.getSection().getSectionId();
+        // Snapshot the stored inputs, independently of the report aggregation implementation.
+        var recorded = evaluationRepository.findByWeekAndEvaluateeId("2023-W31", target.getId());
+        assertThat(recorded).hasSize(3);
+        var publicComments = recorded.stream().map(team.projectpulse.evaluation.PeerEvaluation::getPublicComment).toList();
+        var privateComments = recorded.stream().map(team.projectpulse.evaluation.PeerEvaluation::getPrivateComment).toList();
+        var criterionScores = recorded.stream().flatMap(row -> row.getRatings().stream())
+                .collect(java.util.stream.Collectors.groupingBy(rating -> rating.getCriterion().getCriterionId(),
+                        java.util.stream.Collectors.averagingDouble(rating -> rating.getActualScore())));
+        assertThat(criterionScores).isNotEmpty();
         service.deactivateStudent(target.getId());
         long count = evaluationRepository.count();
         var attempted = new team.projectpulse.evaluation.PeerEvaluation("2023-W32", author, target, List.of(), "new", "new");
@@ -120,7 +129,11 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
         // Seeded recorded totals are 47, 54 and 49: all three contribute after their authors deactivate.
         assertThat(historical.getAverageTotalScore()).isEqualTo(50.0);
         assertThat(historical.getTeamName()).isNull();
-        assertThat(historical.getPublicComments()).hasSize(3);
+        assertThat(historical.getPublicComments()).containsExactlyInAnyOrderElementsOf(publicComments);
+        assertThat(historical.getPrivateComments()).containsExactlyInAnyOrderElementsOf(privateComments);
+        assertThat(historical.getRatingAverages()).hasSize(criterionScores.size());
+        historical.getRatingAverages().forEach(rating ->
+                assertThat(rating.getAverageScore()).isCloseTo(criterionScores.get(rating.getCriterionId()), within(0.000001)));
         var emptyWeek = evaluations.generateWeeklyPeerEvaluationReportForSection(sectionId, "2099-W01");
         assertThat(emptyWeek.getPeerEvaluationAverages()).extracting(team.projectpulse.evaluation.PeerEvaluationAverage::getStudentId)
                 .doesNotContain(target.getId(), author.getId());
@@ -135,6 +148,7 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
         CountDownLatch locked = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch saving = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicLong savingConnection = new java.util.concurrent.atomic.AtomicLong();
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {
             Future<Boolean> deactivate = pool.submit(() -> {
@@ -143,7 +157,7 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
                         caller("b.gates@abc.edu", "ROLE_instructor");
                         boolean changed = service.deactivateStudent(id).changed();
                         locked.countDown();
-                        try { if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("release timeout"); }
+                        try { if (!release.await(30, TimeUnit.SECONDS)) throw new IllegalStateException("release timeout"); }
                         catch (InterruptedException ex) { throw new IllegalStateException(ex); }
                         return changed;
                     });
@@ -155,13 +169,34 @@ class StudentDeactivationIntegrationTest extends AbstractIntegrationTest {
                     tx.executeWithoutResult(status -> {
                         caller("b.gates@abc.edu", "ROLE_instructor");
                         Student update = new Student("changed", "Changed", "Smith", "changed@abc.edu", "", true, "student");
+                        savingConnection.set(jdbc.queryForObject("select connection_id()", Long.class));
                         saving.countDown();
                         service.updateStudent(id, update, true);
                     });
                 } finally { SecurityContextHolder.clearContext(); }
             });
             assertThat(saving.await(10, TimeUnit.SECONDS)).isTrue();
-            assertThatThrownBy(() -> save.get(200, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+            // Observe a real InnoDB lock wait for this worker, rather than inferring it from elapsed time.
+            var mysql = team.projectpulse.SharedContainers.MYSQL;
+            try (var observer = java.sql.DriverManager.getConnection(mysql.getJdbcUrl(), "root", mysql.getPassword());
+                 var query = observer.prepareStatement("""
+                         select count(*) from performance_schema.data_lock_waits w
+                         join performance_schema.threads t on t.thread_id = w.requesting_thread_id
+                         where t.processlist_id = ?
+                         """)) {
+                query.setLong(1, savingConnection.get());
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                boolean waiting = false;
+                while (System.nanoTime() < deadline) {
+                    try (var rows = query.executeQuery()) {
+                        rows.next();
+                        waiting = rows.getInt(1) > 0;
+                    }
+                    if (waiting || save.isDone()) break;
+                    Thread.sleep(25);
+                }
+                assertThat(waiting).as("profile worker must reach an InnoDB lock wait before deactivation commits").isTrue();
+            }
             release.countDown();
             assertThat(deactivate.get(10, TimeUnit.SECONDS)).isTrue();
             assertThatThrownBy(() -> save.get(10, TimeUnit.SECONDS)).isInstanceOf(ExecutionException.class)
