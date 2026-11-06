@@ -86,6 +86,32 @@ class ReminderIntegrationTest extends AbstractIntegrationTest {
         this.studentJohnToken = login("j.smith@abc.edu");
     }
 
+    @Autowired team.projectpulse.section.SectionService sectionService;
+    @Autowired SubmissionStatusService submissionStatusService;
+    @Autowired ReminderService reminderService;
+
+    // Oracle: UC-STU-deactivate-student 6d, BR-submission-owed; design T10.
+    @Test
+    void deactivatedStudentReceivesNeitherOnDemandNorScheduledReminder() throws Exception {
+        Student woody = student("w.allen@abc.edu");
+        this.mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                        this.baseUrl + "/students/" + woody.getId() + "/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(status().isOk());
+        sendReminders(this.instructorBillToken, "WEEKLY_ACTIVITY_REPORT").andExpect(status().isOk());
+        sendReminders(this.instructorBillToken, "PEER_EVALUATION").andExpect(status().isOk());
+        verify(this.emailService, never()).sendReminderEmail(org.mockito.ArgumentMatchers.eq(woody.getEmail()), anyString(), anyString());
+        org.mockito.Mockito.clearInvocations(this.emailService);
+        stubClock(LocalDate.of(2023, 8, 15)); // Tuesday: peer evaluations for W32 are due.
+        new WeeklyReminderScheduler(this.sectionService, this.submissionStatusService, this.reminderService, this.clock, true)
+                .sendWeeklyReminders();
+        ArgumentCaptor<String> recipients = ArgumentCaptor.forClass(String.class);
+        verify(this.emailService, org.mockito.Mockito.atLeastOnce()).sendReminderEmail(recipients.capture(), anyString(), anyString());
+        assertThat(recipients.getAllValues()).doesNotContain(woody.getEmail());
+        assertThat(this.submissionStatusService.findOwedItems(2, List.of(SubmittableItem.WEEKLY_ACTIVITY_REPORT, SubmittableItem.PEER_EVALUATION), WEEK))
+                .doesNotContainKey(woody);
+    }
+
     // Main success scenario
 
     @Test

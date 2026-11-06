@@ -37,8 +37,24 @@
             </el-tag>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="updateCurrentUser">Update</el-button>
+            <el-button
+              type="primary"
+              :disabled="profileConflict"
+              @click="updateCurrentUser"
+              data-cy="user-profile-save"
+              >Update</el-button
+            >
           </el-form-item>
+          <el-alert
+            v-if="profileConflict"
+            title="Account status changed. Refresh before saving again."
+            type="warning"
+            :closable="false"
+            data-cy="profile-conflict"
+          />
+          <el-button v-if="profileConflict" @click="refreshStudentProfile" data-cy="profile-refresh"
+            >Refresh profile</el-button
+          >
         </el-form>
       </el-col>
     </el-row>
@@ -48,7 +64,8 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useUserInfoStore } from '@/stores/userInfo'
-import { updateStudent } from '@/apis/student'
+import { updateStudent, findStudentById } from '@/apis/student'
+import { isAxiosError } from 'axios'
 import { updateInstructor } from '@/apis/instructor'
 import type { Student, UpdateStudentResponse } from '@/apis/student/types'
 import type { Instructor, UpdateInstructorResponse } from '@/apis/instructor/types'
@@ -64,6 +81,17 @@ const userInfo = ref<Student | Instructor>({
   enabled: userInfoStore.userInfo!.enabled,
   roles: userInfoStore.userInfo!.roles
 })
+
+const expectedEnabled = ref(userInfo.value.enabled)
+const profileConflict = ref(false)
+
+async function refreshStudentProfile() {
+  const result = await findStudentById(userInfo.value.id as number)
+  userInfo.value = { ...result.data }
+  userInfoStore.setUserInfo(result.data)
+  expectedEnabled.value = result.data.enabled
+  profileConflict.value = false
+}
 
 const userForm = ref()
 
@@ -94,9 +122,18 @@ async function updateCurrentUser() {
   // course and course section) from a persisted store nothing else refreshes, which locked her out of every page
   // that needs a team until she logged in again.
   if (userInfoStore.isStudent) {
-    const result: UpdateStudentResponse = await updateStudent(userInfo.value as Student)
-    ElMessage.success('User updated successfully')
-    userInfoStore.setUserInfo(result.data)
+    if (expectedEnabled.value === undefined || profileConflict.value) return
+    try {
+      const result: UpdateStudentResponse = await updateStudent(
+        userInfo.value as Student,
+        expectedEnabled.value
+      )
+      ElMessage.success('User updated successfully')
+      userInfoStore.setUserInfo(result.data)
+      expectedEnabled.value = result.data.enabled
+    } catch (error) {
+      if (isAxiosError(error) && error.response?.status === 409) profileConflict.value = true
+    }
   } else if (userInfoStore.isInstructor) {
     const result: UpdateInstructorResponse = await updateInstructor(userInfo.value as Instructor)
     ElMessage.success('User updated successfully')

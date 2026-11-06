@@ -26,6 +26,22 @@ public class StudentSecurityService {
         this.userUtils = userUtils;
     }
 
+    /** Dedicated lifecycle guard: no student-self alternative and no default-section restriction. */
+    public boolean canDeactivateStudent(Integer studentId) {
+        if (studentId == null || studentId <= 0) return false;
+        Integer callerId;
+        try {
+            callerId = this.userUtils.getUserId();
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+        if (callerId == null) return false;
+        boolean instructor = this.userUtils.hasRole("ROLE_instructor");
+        boolean admin = this.userUtils.hasRole("ROLE_admin");
+        return (instructor || admin)
+                && this.studentRepository.findDeactivationTarget(studentId, callerId, instructor, admin).isPresent();
+    }
+
     public boolean isStudentSelf(Integer studentId) {
         Integer studentIdFromJwt = this.userUtils.getUserId();
         return studentId.equals(studentIdFromJwt);

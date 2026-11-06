@@ -296,6 +296,53 @@ class EvaluationServiceTest {
         SecurityContextHolder.clearContext(); // Clear the security context after each test to avoid interference between tests
     }
 
+    // Oracle: BR-evaluation-active-participants; design T8. No insert on refusal.
+    @Test
+    void rejectsNewEvaluationOfInactiveTeammate() {
+        eric.setEnabled(false);
+        var evaluation = new PeerEvaluation("2023-W31", john, eric, List.of(), "public", "private");
+        assertThatThrownBy(() -> evaluationService.addPeerEvaluation(evaluation))
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("This student is inactive and cannot receive new peer evaluations. Refresh teammates to continue.");
+        verify(evaluationRepository, times(0)).save(any());
+    }
+
+    @Test
+    void rejectsNewEvaluationByInactiveStudent() {
+        john.setEnabled(false);
+        var evaluation = new PeerEvaluation("2023-W31", john, eric, List.of(), "public", "private");
+        assertThatThrownBy(() -> evaluationService.addPeerEvaluation(evaluation))
+                .isInstanceOf(PeerEvaluationIllegalArgumentException.class)
+                .hasMessage("Inactive students cannot submit new peer evaluations.");
+        verify(evaluationRepository, times(0)).save(any());
+    }
+
+    // Oracle: BR-evaluation-active-participants; design T9. Keep stored history after status/team changes.
+    @Test
+    void inactiveReportRowsDependOnRecordedWeekAndKeepInactiveAuthorsScores() {
+        john.setEnabled(false);
+        eric.setEnabled(false);
+        eric.getTeam().removeStudent(eric);
+        given(sectionRepository.findById(2)).willReturn(Optional.of(eric.getSection()));
+        given(studentRepository.findBySectionSectionId(2)).willReturn(List.of(john, eric, woody));
+        given(evaluationRepository.existsByWeekAndEvaluateeId("2023-W31", john.getId())).willReturn(false);
+        given(evaluationRepository.existsByWeekAndEvaluateeId("2023-W31", eric.getId())).willReturn(true);
+        given(evaluationRepository.findByWeekAndEvaluateeId("2023-W31", eric.getId())).willReturn(ericsW31Evaluations);
+        var report = evaluationService.generateWeeklyPeerEvaluationReportForSection(2, "2023-W31");
+        assertThat(report.getPeerEvaluationAverages()).extracting(PeerEvaluationAverage::getStudentId)
+                .containsExactly(eric.getId(), woody.getId());
+        var historical = report.getPeerEvaluationAverages().get(0);
+        assertThat(historical.getTeamName()).isNull();
+        assertThat(historical.getAverageTotalScore()).isEqualTo(50.0);
+        assertThat(historical.getPublicComments()).containsExactlyElementsOf(
+                ericsW31Evaluations.stream().map(PeerEvaluation::getPublicComment).toList());
+        assertThat(historical.getPrivateComments()).containsExactlyElementsOf(
+                ericsW31Evaluations.stream().map(PeerEvaluation::getPrivateComment).toList());
+        var otherWeek = evaluationService.generateWeeklyPeerEvaluationReportForSection(2, "2023-W32");
+        assertThat(otherWeek.getPeerEvaluationAverages()).extracting(PeerEvaluationAverage::getStudentId)
+                .containsExactly(woody.getId());
+    }
+
     @Test
     void testAddPeerEvaluationSuccess() {
         // Given
@@ -414,8 +461,11 @@ class EvaluationServiceTest {
                 .hasMessage("You have already submitted an evaluation for " + newPeerEvaluation.getEvaluatee().getFirstName() + " in this week.");
     }
 
-    @Test
-    void testUpdatePeerEvaluation() {
+    // Oracle: BR-evaluation-active-participants; design T8 retains edits about inactive targets.
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void testUpdatePeerEvaluation(boolean evaluateeEnabled) {
+        this.eric.setEnabled(evaluateeEnabled);
         // Given
         // Aug 8, 2023 falls in 2023-W32, which makes 2023-W31 the previous week and this evaluation's window open
         LocalDate fixedDate = LocalDate.of(2023, 8, 8);

@@ -6,11 +6,12 @@ import team.projectpulse.system.UserUtils;
 import team.projectpulse.system.exception.ObjectNotFoundException;
 import team.projectpulse.user.userinvitation.UserInvitationService;
 import jakarta.transaction.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -22,6 +23,8 @@ import java.util.Map;
 @Transactional
 public class StudentService {
 
+    private final EntityManager entityManager;
+
     private final StudentRepository studentRepository;
     private final SectionRepository sectionRepository;
     private final UserInvitationService userInvitationService;
@@ -29,12 +32,13 @@ public class StudentService {
     private final UserUtils userUtils;
 
 
-    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils) {
+    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils, EntityManager entityManager) {
         this.studentRepository = studentRepository;
         this.sectionRepository = sectionRepository;
         this.userInvitationService = userInvitationService;
         this.passwordEncoder = passwordEncoder;
         this.userUtils = userUtils;
+        this.entityManager = entityManager;
     }
 
     public Page<Student> findByCriteria(Map<String, String> searchCriteria, Pageable pageable) {
@@ -104,9 +108,40 @@ public class StudentService {
         return savedStudent;
     }
 
-    public Student updateStudent(Integer studentId, Student update) {
+    /** UC-STU-deactivate-student: change only the account flag; retain membership and work. */
+    public DeactivationResult deactivateStudent(Integer studentId) {
+        Integer callerId = this.userUtils.getUserId();
+        if (callerId == null) throw new ObjectNotFoundException("student", studentId);
+        boolean instructor = this.userUtils.hasRole("ROLE_instructor");
+        boolean admin = this.userUtils.hasRole("ROLE_admin");
+        if (!instructor && !admin) {
+            throw new ObjectNotFoundException("student", studentId);
+        }
+        Student student = this.studentRepository.findDeactivationTarget(studentId, callerId, instructor, admin)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+        // Refresh after acquiring the row lock: a previous managed instance may be stale.
+        this.entityManager.refresh(student, LockModeType.PESSIMISTIC_WRITE);
+        if (!student.isEnabled()) {
+            return new DeactivationResult(student, false);
+        }
+        student.setEnabled(false);
+        this.studentRepository.save(student);
+        return new DeactivationResult(student, true);
+    }
+
+    public record DeactivationResult(Student student, boolean changed) {}
+
+    public Student updateStudent(Integer studentId, Student update, boolean expectedEnabled) {
         Student oldStudent = this.studentRepository.findById(studentId)
                 .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+
+        this.entityManager.refresh(oldStudent, LockModeType.PESSIMISTIC_WRITE);
+        if (oldStudent.isEnabled() != expectedEnabled) {
+            throw new ObjectOptimisticLockingFailureException(Student.class, studentId);
+        }
+        if (oldStudent.isEnabled() && !update.isEnabled()) {
+            throw new IllegalArgumentException("Use the dedicated deactivation action to deactivate a student.");
+        }
 
         // If the user is not an admin, then the user can only update her username, first rubricName, last rubricName, and email
         oldStudent.setUsername(update.getUsername());
@@ -114,10 +149,7 @@ public class StudentService {
         oldStudent.setLastName(update.getLastName());
         oldStudent.setEmail(update.getEmail());
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
-        // If the user is an admin, then the user can update all the fields
-        if (authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"))) {
+        if (this.userUtils.hasRole("ROLE_instructor")) {
             oldStudent.setEnabled(update.isEnabled());
 //            oldStudent.setRoles(update.getRoles());
         }
