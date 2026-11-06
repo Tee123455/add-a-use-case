@@ -206,7 +206,7 @@ public class SecurityConfiguration {
                         // Security rules for the /students/** endpoint.
                         .requestMatchers(HttpMethod.POST, this.baseUrl + "/students/search").hasAuthority("ROLE_instructor")
                         .requestMatchers(HttpMethod.POST, this.baseUrl + "/students").permitAll()
-                        .requestMatchers(HttpMethod.GET, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)
+                        .requestMatchers(HttpMethod.GET, this.baseUrl + "/students/{studentId}").access(AuthorizationManagers.anyOf(this.userOwnershipAuthorizationManager, studentDeactivationAuthorizationManager))
                         .requestMatchers(HttpMethod.PUT, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)
                         .requestMatchers(HttpMethod.PUT, this.baseUrl + "/students/{studentId}/deactivate").access(studentDeactivationAuthorizationManager)
                         .requestMatchers(HttpMethod.DELETE, this.baseUrl + "/students/{studentId}").access(this.userOwnershipAuthorizationManager)

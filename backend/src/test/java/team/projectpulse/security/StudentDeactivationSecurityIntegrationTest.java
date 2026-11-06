@@ -173,4 +173,63 @@ class StudentDeactivationSecurityIntegrationTest extends AbstractIntegrationTest
         assertThat(students.findById(target).orElseThrow().getFirstName()).isEqualTo("John");
     }
 
+    // Oracle: T8, BR-evaluation-active-participants: deactivation does not introduce an edit prohibition.
+    @Test
+    void existingEvaluationAboutInactiveTargetRemainsEditableInOpenWindow() throws Exception {
+        String authorToken = login("j.smith@abc.edu");
+        int target = id("e.hudson@abc.edu");
+        String json = mvc.perform(get(BASE + "/evaluations/evaluators/" + id("j.smith@abc.edu") + "/week/2023-W32")
+                        .header(HttpHeaders.AUTHORIZATION, authorToken)).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        org.json.JSONArray rows = new JSONObject(json).getJSONArray("data");
+        JSONObject evaluation = null;
+        for (int index = 0; index < rows.length(); index++) {
+            if (rows.getJSONObject(index).getInt("evaluateeId") == target) evaluation = rows.getJSONObject(index);
+        }
+        assertThat(evaluation).isNotNull();
+        mvc.perform(put(BASE + "/students/" + target + "/deactivate")
+                .header(HttpHeaders.AUTHORIZATION, login("b.gates@abc.edu"))).andExpect(status().isOk());
+        evaluation.put("publicComment", "Edited while the original week remains open");
+        mvc.perform(put(BASE + "/evaluations/" + evaluation.getInt("evaluationId"))
+                        .header(HttpHeaders.AUTHORIZATION, authorToken).contentType(MediaType.APPLICATION_JSON)
+                        .content(evaluation.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.publicComment").value("Edited while the original week remains open"));
+    }
+
+    // Oracle: T14. A fresh inactive snapshot retains the existing generic status-update behavior.
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void freshInactiveProfileCanUseRetainedIntentionalStatusUpdate() throws Exception {
+        int target = id("j.smith@abc.edu");
+        String instructor = login("b.gates@abc.edu");
+        try {
+            mvc.perform(put(BASE + "/students/" + target + "/deactivate").header(HttpHeaders.AUTHORIZATION, instructor))
+                    .andExpect(status().isOk());
+            String json = mvc.perform(get(BASE + "/students/" + target).header(HttpHeaders.AUTHORIZATION, instructor))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            JSONObject profile = new JSONObject(json).getJSONObject("data");
+            profile.put("enabled", true);
+            mvc.perform(put(BASE + "/students/" + target).param("expectedEnabled", "false")
+                            .header(HttpHeaders.AUTHORIZATION, instructor).contentType(MediaType.APPLICATION_JSON).content(profile.toString()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.enabled").value(true));
+        } finally {
+            new TransactionTemplate(transactions).executeWithoutResult(status -> students.findById(target).orElseThrow().setEnabled(true));
+        }
+    }
+
+    // Oracle: main step 2 + 3a; owning course admins need not be assigned to the target section.
+    @Test
+    void courseOwnerCanViewDetailsAndDeactivateWithoutSectionAssignment() throws Exception {
+        int target = id("j.smith@abc.edu");
+        var owner = (team.projectpulse.instructor.Instructor) users.findByEmail("b.wei@abc.edu").orElseThrow();
+        students.findById(target).orElseThrow().getSection().removeInstructor(owner);
+        users.flush();
+        String token = login("b.wei@abc.edu");
+        mvc.perform(get(BASE + "/students/" + target).header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(target));
+        mvc.perform(put(BASE + "/students/" + target + "/deactivate").header(HttpHeaders.AUTHORIZATION, token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.enabled").value(false));
+    }
+
 }
